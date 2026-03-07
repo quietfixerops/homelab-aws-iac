@@ -1,0 +1,19 @@
+name: Terraform
+on: [push, pull_request]
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::YOURACCOUNT:role/GitHubActionsTerraformRole
+          aws-region: us-east-1
+      - run: terraform init
+      - run: terraform validate
+      - run: terraform plan -var-file=terraform.tfvars   # on PR
+#      - run: terraform apply -auto-approve            # only on main (add if: github.ref == 'refs/heads/main')
