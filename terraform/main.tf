@@ -61,29 +61,6 @@ resource "aws_volume_attachment" "actual_data_attach" {
   instance_id = aws_instance.subnet_router.id
 }
 
-# ============== S3 Bucket (your existing bucket) ==============
-resource "aws_s3_bucket" "backups" {
-  bucket = "backups-083636778104"
-}
-
-# Weekly retention: delete backups older than 7 days
-resource "aws_s3_bucket_lifecycle_configuration" "backups" {
-  bucket = aws_s3_bucket.backups.id
-
-  rule {
-    id     = "weekly-retention"
-    status = "Enabled"
-
-    expiration {
-      days = 7
-    }
-
-    filter {
-      prefix = "actual-budget/"
-    }
-  }
-}
-
 # ============== Single EC2 ==============
 resource "aws_instance" "subnet_router" {
   ami           = data.aws_ssm_parameter.ubuntu_2404_arm64.value
@@ -157,7 +134,7 @@ resource "aws_instance" "subnet_router" {
     docker compose down || true
     docker compose up -d
 
-    # Daily backup to your existing bucket
+    # Daily backup to your existing bucket (organized folder)
     cat > /usr/local/bin/backup-actualbudget.sh <<'BACKUP'
     #!/bin/bash
     DATE=$(date +%Y-%m-%d)
