@@ -1,4 +1,4 @@
-# Latest Ubuntu 24.04 LTS ARM64 AMI (official Canonical)
+# Latest Ubuntu 24.04 LTS ARM64 AMI
 data "aws_ssm_parameter" "ubuntu_2404_arm64" {
   name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
 }
@@ -26,10 +26,9 @@ module "vpc" {
 # ============== Security Group (Tailscale + Actual Budget) ==============
 resource "aws_security_group" "subnet_router" {
   name        = "${var.house_name}-subnet-router-sg"
-  description = "Tailscale subnet router + Actual Budget"
+  description = "Tailscale + Actual Budget"
   vpc_id      = module.vpc.vpc_id
 
-  # Tailscale
   ingress {
     from_port   = 41641
     to_port     = 41641
@@ -37,12 +36,11 @@ resource "aws_security_group" "subnet_router" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Actual Budget (protected by Tailscale ACLs)
   ingress {
     from_port   = 5006
     to_port     = 5006
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["0.0.0.0/0"]   # protected by Tailscale ACLs
   }
 
   egress {
@@ -67,11 +65,12 @@ resource "aws_instance" "subnet_router" {
 
   user_data = <<-EOF
     #!/bin/bash -ex
-    apt-get update -y
-    apt-get install -y curl docker.io docker-compose-plugin
-    systemctl enable --now docker
 
-    # Tailscale
+    # === System update ===
+    apt-get update -y
+    apt-get upgrade -y
+
+    # === Tailscale (installed first) ===
     curl -fsSL https://tailscale.com/install.sh | sh
     echo 'net.ipv4.ip_forward = 1' | tee -a /etc/sysctl.conf
     echo 'net.ipv6.conf.all.forwarding = 1' | tee -a /etc/sysctl.conf
@@ -87,7 +86,16 @@ resource "aws_instance" "subnet_router" {
 
     tailscale set --advertise-exit-node=false
 
-    # Actual Budget (Docker)
+    # === Docker (official method for Ubuntu 24.04 ARM64) ===
+    apt-get install -y ca-certificates curl gnupg lsb-release
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    apt-get update -y
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    systemctl enable --now docker
+
+    # === Actual Budget ===
     mkdir -p /opt/actualbudget/data
     cat > /opt/actualbudget/docker-compose.yml <<'EOL'
     services:
