@@ -3,7 +3,7 @@ data "aws_ssm_parameter" "ubuntu_2404_arm64" {
   name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
 }
 
-# ============== VPC (public + private subnets, Internet Gateway only) ==============
+# ============== VPC (public-only — cheapest possible) ==============
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "~> 5.0"
@@ -11,16 +11,11 @@ module "vpc" {
   name = "${var.house_name}-vpc"
   cidr = var.vpc_cidr
 
-  azs             = ["${var.aws_region}a", "${var.aws_region}b"]
-  private_subnets = [cidrsubnet(var.vpc_cidr, 4, 1), cidrsubnet(var.vpc_cidr, 4, 2)]
-  public_subnets  = [cidrsubnet(var.vpc_cidr, 4, 0), cidrsubnet(var.vpc_cidr, 4, 3)]
+  azs            = ["${var.aws_region}a", "${var.aws_region}b"]
+  public_subnets = [cidrsubnet(var.vpc_cidr, 4, 0), cidrsubnet(var.vpc_cidr, 4, 3)]
 
-  # === NAT Gateway removed for cost savings ===
-  enable_nat_gateway     = false
-  single_nat_gateway     = false
-  one_nat_gateway_per_az = false
-  create_igw             = true   # Free Internet Gateway
-  # ===========================================
+  enable_nat_gateway = false
+  create_igw         = true
 
   tags = {
     House = var.house_name
@@ -28,16 +23,25 @@ module "vpc" {
   }
 }
 
-# ============== Security Group ==============
+# ============== Security Group (Tailscale + Actual Budget) ==============
 resource "aws_security_group" "subnet_router" {
   name        = "${var.house_name}-subnet-router-sg"
-  description = "Tailscale subnet router"
+  description = "Tailscale subnet router + Actual Budget"
   vpc_id      = module.vpc.vpc_id
 
+  # Tailscale
   ingress {
     from_port   = 41641
     to_port     = 41641
     protocol    = "udp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Actual Budget (protected by Tailscale ACLs)
+  ingress {
+    from_port   = 5006
+    to_port     = 5006
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
@@ -51,7 +55,7 @@ resource "aws_security_group" "subnet_router" {
   tags = { House = var.house_name }
 }
 
-# ============== Tailscale Subnet Router EC2 (Ubuntu 24.04) ==============
+# ============== Single EC2: Tailscale Subnet Router + Actual Budget ==============
 resource "aws_instance" "subnet_router" {
   ami           = data.aws_ssm_parameter.ubuntu_2404_arm64.value
   instance_type = "t4g.nano"
@@ -64,13 +68,15 @@ resource "aws_instance" "subnet_router" {
   user_data = <<-EOF
     #!/bin/bash -ex
     apt-get update -y
-    curl -fsSL https://tailscale.com/install.sh | sh
+    apt-get install -y curl docker.io docker-compose-plugin
+    systemctl enable --now docker
 
+    # Tailscale
+    curl -fsSL https://tailscale.com/install.sh | sh
     echo 'net.ipv4.ip_forward = 1' | tee -a /etc/sysctl.conf
     echo 'net.ipv6.conf.all.forwarding = 1' | tee -a /etc/sysctl.conf
     sysctl -p
 
-    # Join Tailscale (robust key handling)
     tailscale up \
       --authkey="${var.tailscale_auth_key}" \
       --hostname=${var.house_name}-subnet-router \
@@ -80,6 +86,22 @@ resource "aws_instance" "subnet_router" {
       --accept-dns=false
 
     tailscale set --advertise-exit-node=false
+
+    # Actual Budget (Docker)
+    mkdir -p /opt/actualbudget/data
+    cat > /opt/actualbudget/docker-compose.yml <<'EOL'
+    services:
+      actual:
+        image: actualbudget/actual-server:latest
+        ports:
+          - "5006:5006"
+        volumes:
+          - ./data:/data
+        restart: unless-stopped
+    EOL
+
+    cd /opt/actualbudget
+    docker compose up -d
   EOF
 
   tags = {
@@ -106,3 +128,7 @@ resource "aws_iam_role_policy_attachment" "ssm_core" {
   role       = aws_iam_role.ssm_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
+
+# Outputs
+output "subnet_router_private_ip" { value = aws_instance.subnet_router.private_ip }
+output "subnet_router_public_ip"  { value = aws_instance.subnet_router.public_ip }
