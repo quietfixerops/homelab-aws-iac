@@ -67,7 +67,7 @@ resource "aws_volume_attachment" "actual_data_attach" {
   instance_id = aws_instance.subnet_router.id
 }
 
-# ============== Single EC2 with smart volume handling ==============
+# ============== Single EC2 with optimized user_data ==============
 resource "aws_instance" "subnet_router" {
   ami           = data.aws_ssm_parameter.ubuntu_2404_arm64.value
   instance_type = "t4g.nano"
@@ -77,7 +77,6 @@ resource "aws_instance" "subnet_router" {
 
   iam_instance_profile = aws_iam_instance_profile.ssm_profile.name
 
-  # This makes future changes smooth (no more manual termination)
   lifecycle {
     create_before_destroy = true
   }
@@ -85,10 +84,16 @@ resource "aws_instance" "subnet_router" {
   user_data = <<-EOF
     #!/bin/bash -ex
 
+    # === Logging ===
+    exec > >(tee -a /var/log/user-data.log) 2>&1
+    echo "=== User-data started at $(date) ==="
+
+    # === System update ===
     apt-get update -y
-    apt-get upgrade -y
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
 
     # === Tailscale ===
+    echo "Installing Tailscale..."
     curl -fsSL https://tailscale.com/install.sh | sh
     echo 'net.ipv4.ip_forward = 1' | tee -a /etc/sysctl.conf
     echo 'net.ipv6.conf.all.forwarding = 1' | tee -a /etc/sysctl.conf
@@ -104,7 +109,8 @@ resource "aws_instance" "subnet_router" {
 
     tailscale set --advertise-exit-node=false
 
-    # === Docker ===
+    # === Docker (official, idempotent) ===
+    echo "Installing Docker..."
     apt-get install -y ca-certificates curl gnupg lsb-release
     mkdir -p /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
@@ -114,15 +120,15 @@ resource "aws_instance" "subnet_router" {
     systemctl enable --now docker
 
     # === Smart EBS Volume Mount (nvme* detection) ===
-    echo "=== Setting up persistent data volume ==="
+    echo "Mounting persistent data volume..."
     mkdir -p /opt/actualbudget/data
 
-    # Find the attached EBS volume (any nvme that is not the root disk)
+    # Find the first unused nvme device (not the root disk)
     EBS_DEVICE=$(lsblk -o NAME,SIZE -d -n | awk '$2 ~ /^[0-9]/ && $1 ~ /^nvme/ && $1 !~ /n1p/ {print "/dev/" $1}' | head -n1)
 
     if [ -n "$EBS_DEVICE" ]; then
       echo "Found EBS device: $EBS_DEVICE"
-      # Format only if it has no filesystem
+      # Format only if no filesystem exists
       if ! blkid $EBS_DEVICE > /dev/null 2>&1; then
         mkfs -t ext4 $EBS_DEVICE
       fi
@@ -131,6 +137,7 @@ resource "aws_instance" "subnet_router" {
     fi
 
     # === Actual Budget ===
+    echo "Starting Actual Budget..."
     cat > /opt/actualbudget/docker-compose.yml <<'EOL'
     services:
       actual:
@@ -145,6 +152,8 @@ resource "aws_instance" "subnet_router" {
     cd /opt/actualbudget
     docker compose down || true
     docker compose up -d
+
+    echo "=== User-data finished successfully at $(date) ==="
   EOF
 
   tags = {
