@@ -23,24 +23,18 @@ module "vpc" {
   }
 }
 
-# ============== Security Group (Tailscale + Actual Budget) ==============
+# ============== Security Group (Tailscale only) ==============
 resource "aws_security_group" "subnet_router" {
   name        = "${var.house_name}-subnet-router-sg"
-  description = "Tailscale + Actual Budget"
+  description = "Tailscale only (zero public ports except required UDP)"
   vpc_id      = module.vpc.vpc_id
 
+  # Tailscale (required for direct connections)
   ingress {
     from_port   = 41641
     to_port     = 41641
     protocol    = "udp"
     cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 5006
-    to_port     = 5006
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]   # protected by Tailscale ACLs
   }
 
   egress {
