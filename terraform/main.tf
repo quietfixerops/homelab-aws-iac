@@ -3,7 +3,7 @@ data "aws_ssm_parameter" "ubuntu_2404_arm64" {
   name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
 }
 
-# ============== VPC (public-only — cheapest) ==============
+# ============== VPC ==============
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "~> 5.0"
@@ -17,10 +17,7 @@ module "vpc" {
   enable_nat_gateway = false
   create_igw         = true
 
-  tags = {
-    House = var.house_name
-    IaC   = "Terraform"
-  }
+  tags = { House = var.house_name, IaC = "Terraform" }
 }
 
 # ============== Security Group (Tailscale only) ==============
@@ -46,7 +43,7 @@ resource "aws_security_group" "subnet_router" {
   tags = { House = var.house_name }
 }
 
-# ============== Persistent EBS Volume for Actual Budget data ==============
+# ============== Persistent EBS Volume (data never deleted) ==============
 resource "aws_ebs_volume" "actual_data" {
   availability_zone = "${var.aws_region}a"
   size              = 10
@@ -63,14 +60,14 @@ resource "aws_ebs_volume" "actual_data" {
   }
 }
 
-# ============== Attach EBS to EC2 ==============
+# ============== Attach EBS ==============
 resource "aws_volume_attachment" "actual_data_attach" {
   device_name = "/dev/sdf"
   volume_id   = aws_ebs_volume.actual_data.id
   instance_id = aws_instance.subnet_router.id
 }
 
-# ============== Single EC2: Tailscale + Actual Budget (with persistent data) ==============
+# ============== EC2 with permanent fix (create new before destroy old) ==============
 resource "aws_instance" "subnet_router" {
   ami           = data.aws_ssm_parameter.ubuntu_2404_arm64.value
   instance_type = "t4g.nano"
@@ -79,6 +76,11 @@ resource "aws_instance" "subnet_router" {
   associate_public_ip_address = true
 
   iam_instance_profile = aws_iam_instance_profile.ssm_profile.name
+
+  # === THIS IS THE PERMANENT FIX ===
+  lifecycle {
+    create_before_destroy = true
+  }
 
   user_data = <<-EOF
     #!/bin/bash -ex
@@ -110,7 +112,7 @@ resource "aws_instance" "subnet_router" {
     apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
     systemctl enable --now docker
 
-    # Mount persistent EBS volume
+    # Mount persistent data
     mkdir -p /opt/actualbudget/data
     mkfs -t ext4 /dev/sdf || true
     mount /dev/sdf /opt/actualbudget/data || true
@@ -138,7 +140,7 @@ resource "aws_instance" "subnet_router" {
   }
 }
 
-# ============== IAM for SSM ==============
+# ============== IAM ==============
 resource "aws_iam_instance_profile" "ssm_profile" {
   name = "${var.house_name}-ssm-profile"
   role = aws_iam_role.ssm_role.name
