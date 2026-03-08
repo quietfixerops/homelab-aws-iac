@@ -3,7 +3,7 @@ data "aws_ssm_parameter" "ubuntu_2404_arm64" {
   name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
 }
 
-# ============== VPC (public-only) ==============
+# ============== VPC (public-only — cheapest) ==============
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "~> 5.0"
@@ -17,7 +17,10 @@ module "vpc" {
   enable_nat_gateway = false
   create_igw         = true
 
-  tags = { House = var.house_name, IaC = "Terraform" }
+  tags = {
+    House = var.house_name
+    IaC   = "Terraform"
+  }
 }
 
 # ============== Security Group (Tailscale only) ==============
@@ -46,7 +49,7 @@ resource "aws_security_group" "subnet_router" {
 # ============== Persistent EBS Volume for Actual Budget data ==============
 resource "aws_ebs_volume" "actual_data" {
   availability_zone = "${var.aws_region}a"
-  size              = 10                    # 10 GB — plenty for years of budgets
+  size              = 10
   type              = "gp3"
   encrypted         = true
 
@@ -56,11 +59,11 @@ resource "aws_ebs_volume" "actual_data" {
   }
 
   lifecycle {
-    prevent_destroy = true   # ← IMPORTANT: Terraform will NEVER delete your data
+    prevent_destroy = true
   }
 }
 
-# ============== Attach EBS to the EC2 ==============
+# ============== Attach EBS to EC2 ==============
 resource "aws_volume_attachment" "actual_data_attach" {
   device_name = "/dev/sdf"
   volume_id   = aws_ebs_volume.actual_data.id
@@ -109,7 +112,7 @@ resource "aws_instance" "subnet_router" {
 
     # Mount persistent EBS volume
     mkdir -p /opt/actualbudget/data
-    mkfs -t ext4 /dev/sdf || true   # only formats on first attach
+    mkfs -t ext4 /dev/sdf || true
     mount /dev/sdf /opt/actualbudget/data || true
     echo '/dev/sdf /opt/actualbudget/data ext4 defaults,nofail 0 2' | tee -a /etc/fstab
 
@@ -135,7 +138,21 @@ resource "aws_instance" "subnet_router" {
   }
 }
 
-# IAM (unchanged)
-resource "aws_iam_instance_profile" "ssm_profile" { ... }   # keep your existing IAM block
-resource "aws_iam_role" "ssm_role" { ... }
-resource "aws_iam_role_policy_attachment" "ssm_core" { ... }
+# ============== IAM for SSM ==============
+resource "aws_iam_instance_profile" "ssm_profile" {
+  name = "${var.house_name}-ssm-profile"
+  role = aws_iam_role.ssm_role.name
+}
+
+resource "aws_iam_role" "ssm_role" {
+  name = "${var.house_name}-ssm-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{ Effect = "Allow", Principal = { Service = "ec2.amazonaws.com" }, Action = "sts:AssumeRole" }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ssm_core" {
+  role       = aws_iam_role.ssm_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
