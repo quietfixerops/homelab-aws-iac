@@ -1,4 +1,5 @@
 name: Terraform Deploy
+
 on:
   push:
     branches: [ main ]
@@ -10,17 +11,26 @@ jobs:
     permissions:
       id-token: write
       contents: read
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "~> 1.5"
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::083636778104:role/GitHubActionsTerraformRole  # we'll create this next
+          role-to-assume: arn:aws:iam::083636778104:role/GitHubActionsTerraformRole
           aws-region: us-east-1
+
       - run: terraform init
+
       - run: terraform validate
-      - run: terraform plan -var-file=terraform.tfvars
-      - if: github.ref == 'refs/heads/main'
-        run: terraform apply -auto-approve -var-file=terraform.tfvars
+
+      - name: Terraform Plan
+        run: terraform plan -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}"
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main'
+        run: terraform apply -auto-approve -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}"
