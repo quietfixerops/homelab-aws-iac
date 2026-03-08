@@ -3,7 +3,7 @@ data "aws_ssm_parameter" "ubuntu_2404_arm64" {
   name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
 }
 
-# ============== VPC ==============
+# ============== VPC (public-only — cheapest) ==============
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "~> 5.0"
@@ -67,7 +67,7 @@ resource "aws_volume_attachment" "actual_data_attach" {
   instance_id = aws_instance.subnet_router.id
 }
 
-# ============== EC2 with permanent fix (create new before destroy old) ==============
+# ============== Single EC2 with smart volume handling ==============
 resource "aws_instance" "subnet_router" {
   ami           = data.aws_ssm_parameter.ubuntu_2404_arm64.value
   instance_type = "t4g.nano"
@@ -77,17 +77,18 @@ resource "aws_instance" "subnet_router" {
 
   iam_instance_profile = aws_iam_instance_profile.ssm_profile.name
 
-  # === THIS IS THE PERMANENT FIX ===
+  # This makes future changes smooth (no more manual termination)
   lifecycle {
     create_before_destroy = true
   }
 
   user_data = <<-EOF
     #!/bin/bash -ex
+
     apt-get update -y
     apt-get upgrade -y
 
-    # Tailscale
+    # === Tailscale ===
     curl -fsSL https://tailscale.com/install.sh | sh
     echo 'net.ipv4.ip_forward = 1' | tee -a /etc/sysctl.conf
     echo 'net.ipv6.conf.all.forwarding = 1' | tee -a /etc/sysctl.conf
@@ -103,7 +104,7 @@ resource "aws_instance" "subnet_router" {
 
     tailscale set --advertise-exit-node=false
 
-    # Docker
+    # === Docker ===
     apt-get install -y ca-certificates curl gnupg lsb-release
     mkdir -p /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
@@ -112,13 +113,24 @@ resource "aws_instance" "subnet_router" {
     apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
     systemctl enable --now docker
 
-    # Mount persistent data
+    # === Smart EBS Volume Mount (nvme* detection) ===
+    echo "=== Setting up persistent data volume ==="
     mkdir -p /opt/actualbudget/data
-    mkfs -t ext4 /dev/sdf || true
-    mount /dev/sdf /opt/actualbudget/data || true
-    echo '/dev/sdf /opt/actualbudget/data ext4 defaults,nofail 0 2' | tee -a /etc/fstab
 
-    # Actual Budget
+    # Find the attached EBS volume (any nvme that is not the root disk)
+    EBS_DEVICE=$(lsblk -o NAME,SIZE -d -n | awk '$2 ~ /^[0-9]/ && $1 ~ /^nvme/ && $1 !~ /n1p/ {print "/dev/" $1}' | head -n1)
+
+    if [ -n "$EBS_DEVICE" ]; then
+      echo "Found EBS device: $EBS_DEVICE"
+      # Format only if it has no filesystem
+      if ! blkid $EBS_DEVICE > /dev/null 2>&1; then
+        mkfs -t ext4 $EBS_DEVICE
+      fi
+      mount $EBS_DEVICE /opt/actualbudget/data || true
+      echo "$EBS_DEVICE /opt/actualbudget/data ext4 defaults,nofail 0 2" | tee -a /etc/fstab
+    fi
+
+    # === Actual Budget ===
     cat > /opt/actualbudget/docker-compose.yml <<'EOL'
     services:
       actual:
@@ -131,6 +143,7 @@ resource "aws_instance" "subnet_router" {
     EOL
 
     cd /opt/actualbudget
+    docker compose down || true
     docker compose up -d
   EOF
 
