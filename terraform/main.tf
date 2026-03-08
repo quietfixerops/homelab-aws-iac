@@ -61,6 +61,29 @@ resource "aws_volume_attachment" "actual_data_attach" {
   instance_id = aws_instance.subnet_router.id
 }
 
+# ============== S3 Bucket (your existing bucket) ==============
+resource "aws_s3_bucket" "backups" {
+  bucket = "backups-083636778104"
+}
+
+# Weekly retention: delete backups older than 7 days
+resource "aws_s3_bucket_lifecycle_configuration" "backups" {
+  bucket = aws_s3_bucket.backups.id
+
+  rule {
+    id     = "weekly-retention"
+    status = "Enabled"
+
+    expiration {
+      days = 7
+    }
+
+    filter {
+      prefix = "actual-budget/"
+    }
+  }
+}
+
 # ============== Single EC2 ==============
 resource "aws_instance" "subnet_router" {
   ami           = data.aws_ssm_parameter.ubuntu_2404_arm64.value
@@ -89,7 +112,7 @@ resource "aws_instance" "subnet_router" {
     tailscale set --advertise-exit-node=false
 
     # Docker
-    apt-get install -y ca-certificates curl gnupg lsb-release
+    apt-get install -y ca-certificates curl gnupg lsb-release awscli
     mkdir -p /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
@@ -106,7 +129,7 @@ resource "aws_instance" "subnet_router" {
       echo "$EBS_DEVICE /opt/actualbudget/data ext4 defaults,nofail 0 2" | tee -a /etc/fstab
     fi
 
-    # Actual Budget + Watchtower (single Telegram bot)
+    # Actual Budget + Watchtower
     cat > /opt/actualbudget/docker-compose.yml <<'EOL'
     services:
       actual:
@@ -133,6 +156,23 @@ resource "aws_instance" "subnet_router" {
     cd /opt/actualbudget
     docker compose down || true
     docker compose up -d
+
+    # Daily backup to your existing bucket
+    cat > /usr/local/bin/backup-actualbudget.sh <<'BACKUP'
+    #!/bin/bash
+    DATE=$(date +%Y-%m-%d)
+    BACKUP_FILE="/tmp/actualbudget-$DATE.tar.gz"
+    cd /opt/actualbudget
+    docker compose down
+    tar -czf $BACKUP_FILE data/
+    docker compose up -d
+    aws s3 cp $BACKUP_FILE s3://backups-083636778104/actual-budget/actualbudget-$DATE.tar.gz --storage-class STANDARD_IA
+    rm $BACKUP_FILE
+    curl -s -X POST "https://api.telegram.org/bot${var.telegram_bot_token}/sendMessage" -d "chat_id=8634860634" -d "text=✅ Actual Budget backup completed: actual-budget/actualbudget-$DATE.tar.gz"
+    BACKUP
+
+    chmod +x /usr/local/bin/backup-actualbudget.sh
+    echo "0 3 * * * /usr/local/bin/backup-actualbudget.sh" | crontab -
   EOF
 
   tags = { Name = "${var.house_name}-subnet-router", House = var.house_name }
@@ -149,6 +189,19 @@ resource "aws_iam_role" "ssm_role" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{ Effect = "Allow", Principal = { Service = "ec2.amazonaws.com" }, Action = "sts:AssumeRole" }]
+  })
+}
+
+resource "aws_iam_role_policy" "s3_backup" {
+  name = "${var.house_name}-s3-backup"
+  role = aws_iam_role.ssm_role.name
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["s3:PutObject"]
+      Resource = "arn:aws:s3:::backups-083636778104/*"
+    }]
   })
 }
 
