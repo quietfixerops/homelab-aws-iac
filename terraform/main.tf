@@ -3,7 +3,7 @@ data "aws_ssm_parameter" "ubuntu_2404_arm64" {
   name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
 }
 
-# ============== VPC (public-only — cheapest) ==============
+# ============== VPC ==============
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "~> 5.0"
@@ -20,7 +20,7 @@ module "vpc" {
   tags = { House = var.house_name, IaC = "Terraform" }
 }
 
-# ============== Security Group (Tailscale only) ==============
+# ============== Security Group ==============
 resource "aws_security_group" "subnet_router" {
   name        = "${var.house_name}-subnet-router-sg"
   description = "Tailscale only"
@@ -43,31 +43,25 @@ resource "aws_security_group" "subnet_router" {
   tags = { House = var.house_name }
 }
 
-# ============== Persistent EBS Volume (data never deleted) ==============
+# ============== Persistent EBS Volume ==============
 resource "aws_ebs_volume" "actual_data" {
   availability_zone = "${var.aws_region}a"
   size              = 10
   type              = "gp3"
   encrypted         = true
 
-  tags = {
-    Name  = "${var.house_name}-actualbudget-data"
-    House = var.house_name
-  }
+  tags = { Name = "${var.house_name}-actualbudget-data", House = var.house_name }
 
-  lifecycle {
-    prevent_destroy = true
-  }
+  lifecycle { prevent_destroy = true }
 }
 
-# ============== Attach EBS ==============
 resource "aws_volume_attachment" "actual_data_attach" {
   device_name = "/dev/sdf"
   volume_id   = aws_ebs_volume.actual_data.id
   instance_id = aws_instance.subnet_router.id
 }
 
-# ============== Single EC2 with optimized user_data ==============
+# ============== Single EC2 ==============
 resource "aws_instance" "subnet_router" {
   ami           = data.aws_ssm_parameter.ubuntu_2404_arm64.value
   instance_type = "t4g.nano"
@@ -77,40 +71,24 @@ resource "aws_instance" "subnet_router" {
 
   iam_instance_profile = aws_iam_instance_profile.ssm_profile.name
 
-  lifecycle {
-    create_before_destroy = true
-  }
+  lifecycle { create_before_destroy = true }
 
   user_data = <<-EOF
     #!/bin/bash -ex
-
-    # === Logging ===
     exec > >(tee -a /var/log/user-data.log) 2>&1
-    echo "=== User-data started at $(date) ==="
 
-    # === System update ===
-    apt-get update -y
-    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+    apt-get update -y && apt-get upgrade -y
 
-    # === Tailscale ===
-    echo "Installing Tailscale..."
+    # Tailscale
     curl -fsSL https://tailscale.com/install.sh | sh
     echo 'net.ipv4.ip_forward = 1' | tee -a /etc/sysctl.conf
     echo 'net.ipv6.conf.all.forwarding = 1' | tee -a /etc/sysctl.conf
     sysctl -p
 
-    tailscale up \
-      --authkey="${var.tailscale_auth_key}" \
-      --hostname=${var.house_name}-subnet-router \
-      --advertise-routes=${var.vpc_cidr} \
-      --advertise-tags=tag:infra-router \
-      --accept-routes \
-      --accept-dns=false
-
+    tailscale up --authkey="${var.tailscale_auth_key}" --hostname=${var.house_name}-subnet-router --advertise-routes=${var.vpc_cidr} --advertise-tags=tag:infra-router --accept-routes --accept-dns=false
     tailscale set --advertise-exit-node=false
 
-    # === Docker (official, idempotent) ===
-    echo "Installing Docker..."
+    # Docker
     apt-get install -y ca-certificates curl gnupg lsb-release
     mkdir -p /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
@@ -119,25 +97,16 @@ resource "aws_instance" "subnet_router" {
     apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
     systemctl enable --now docker
 
-    # === Smart EBS Volume Mount (nvme* detection) ===
-    echo "Mounting persistent data volume..."
+    # Smart EBS Mount
     mkdir -p /opt/actualbudget/data
-
-    # Find the first unused nvme device (not the root disk)
     EBS_DEVICE=$(lsblk -o NAME,SIZE -d -n | awk '$2 ~ /^[0-9]/ && $1 ~ /^nvme/ && $1 !~ /n1p/ {print "/dev/" $1}' | head -n1)
-
     if [ -n "$EBS_DEVICE" ]; then
-      echo "Found EBS device: $EBS_DEVICE"
-      # Format only if no filesystem exists
-      if ! blkid $EBS_DEVICE > /dev/null 2>&1; then
-        mkfs -t ext4 $EBS_DEVICE
-      fi
+      if ! blkid $EBS_DEVICE > /dev/null 2>&1; then mkfs -t ext4 $EBS_DEVICE; fi
       mount $EBS_DEVICE /opt/actualbudget/data || true
       echo "$EBS_DEVICE /opt/actualbudget/data ext4 defaults,nofail 0 2" | tee -a /etc/fstab
     fi
 
-    # === Actual Budget ===
-    echo "Starting Actual Budget..."
+    # Actual Budget + Watchtower (single Telegram bot)
     cat > /opt/actualbudget/docker-compose.yml <<'EOL'
     services:
       actual:
@@ -147,19 +116,26 @@ resource "aws_instance" "subnet_router" {
         volumes:
           - ./data:/data
         restart: unless-stopped
+
+      watchtower:
+        image: containrrr/watchtower:latest
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock
+        environment:
+          - WATCHTOWER_POLL_INTERVAL=3600
+          - WATCHTOWER_CLEANUP=true
+          - WATCHTOWER_NOTIFICATION_TYPE=shoutrrr
+          - WATCHTOWER_NOTIFICATION_TITLE=Homelab Update
+          - WATCHTOWER_NOTIFICATION_URL=telegram://${var.telegram_bot_token}@telegram?channels=8634860634
+        restart: unless-stopped
     EOL
 
     cd /opt/actualbudget
     docker compose down || true
     docker compose up -d
-
-    echo "=== User-data finished successfully at $(date) ==="
   EOF
 
-  tags = {
-    Name  = "${var.house_name}-subnet-router"
-    House = var.house_name
-  }
+  tags = { Name = "${var.house_name}-subnet-router", House = var.house_name }
 }
 
 # ============== IAM ==============

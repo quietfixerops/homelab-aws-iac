@@ -12,7 +12,6 @@ jobs:
       id-token: write
       contents: read
 
-    # This tells GitHub Actions to run all Terraform commands inside the terraform/ folder
     defaults:
       run:
         working-directory: terraform
@@ -34,8 +33,8 @@ jobs:
       - run: terraform validate
 
       - name: Terraform Plan
-        run: terraform plan -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}"
+        run: terraform plan -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}"
 
       - name: Terraform Apply
         if: github.ref == 'refs/heads/main'
-        run: terraform apply -auto-approve -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}"
+        run: terraform apply -auto-approve -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}"
