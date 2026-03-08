@@ -128,7 +128,3 @@ resource "aws_iam_role_policy_attachment" "ssm_core" {
   role       = aws_iam_role.ssm_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
-
-# Outputs
-output "subnet_router_private_ip" { value = aws_instance.subnet_router.private_ip }
-output "subnet_router_public_ip"  { value = aws_instance.subnet_router.public_ip }
