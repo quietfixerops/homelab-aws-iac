@@ -12,6 +12,11 @@ jobs:
       id-token: write
       contents: read
 
+    # This tells GitHub Actions to run all Terraform commands inside the terraform/ folder
+    defaults:
+      run:
+        working-directory: terraform
+
     steps:
       - uses: actions/checkout@v4
 
