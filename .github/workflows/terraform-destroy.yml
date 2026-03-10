@@ -1,0 +1,42 @@
+name: Terraform Destroy (DANGER ZONE)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type exactly DESTROY to confirm (this will delete everything!)'
+        required: true
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.5"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::083636778104:role/GitHubActionsTerraformRole
+          aws-region: us-east-1
+
+      - run: terraform init
+
+      - name: Confirm Destroy
+        if: github.event.inputs.confirm != 'DESTROY'
+        run: |
+          echo "❌ You must type exactly 'DESTROY' to proceed"
+          exit 1
+
+      - name: Terraform Destroy
+        run: terraform destroy -auto-approve -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}"
