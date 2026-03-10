@@ -34,16 +34,16 @@ jobs:
       - name: Terraform Plan
         run: terraform plan -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}"
 
-      # === ONLY YOU CAN APPROVE ===
-      - name: Require Approval (Only quietfixerops)
+      # === MANUAL APPROVAL (Only you can approve) ===
+      - name: Require Approval
         if: github.ref == 'refs/heads/main'
         uses: trstringer/manual-approval@v1
         with:
           secret: ${{ secrets.GITHUB_TOKEN }}
           approvers: quietfixerops
           minimum-approvals: 1
-          issue-title: "🚀 Approve Terraform Apply?"
-          issue-body: "Review the plan above. Only quietfixerops can approve."
+          issue-title: "🚀 Approve Terraform Apply to main?"
+          issue-body: "Plan has passed. Only quietfixerops can approve."
 
       - name: Terraform Apply
         if: github.ref == 'refs/heads/main'
