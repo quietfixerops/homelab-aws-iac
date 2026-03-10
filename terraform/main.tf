@@ -52,7 +52,7 @@ resource "aws_ebs_volume" "actual_data" {
 
   tags = { Name = "${var.house_name}-actualbudget-data", House = var.house_name }
 
-  lifecycle { prevent_destroy = true }
+#  lifecycle { prevent_destroy = true }
 }
 
 resource "aws_volume_attachment" "actual_data_attach" {
