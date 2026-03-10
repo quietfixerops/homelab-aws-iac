@@ -1,12 +1,10 @@
-name: Terraform Plan
+name: Terraform Apply (Manual)
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
+  workflow_dispatch:
 
 jobs:
-  plan:
+  apply:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -27,6 +25,4 @@ jobs:
           aws-region: us-east-1
 
       - run: terraform init
-      - run: terraform validate
-      - run: terraform plan -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}"
-      
+      - run: terraform apply -auto-approve -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}"
