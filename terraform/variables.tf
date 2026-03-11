@@ -3,7 +3,8 @@ variable "aws_region" {
 }
 
 variable "house_name" {
-  default = "5marionct"
+  description = "Name of this house (e.g. 5marionct, house2, etc.)"
+  type        = string
 }
 
 variable "vpc_cidr" {
@@ -18,4 +19,10 @@ variable "tailscale_auth_key" {
 variable "telegram_bot_token" {
   type      = string
   sensitive = true
+}
+
+variable "telegram_chat_id" {
+  description = "Your Telegram chat ID for notifications"
+  type        = string
+  sensitive   = true
 }
