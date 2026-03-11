@@ -1,4 +1,4 @@
-# Latest Ubuntu 24.04 LTS ARM64 AMI
+# ============== Latest Ubuntu 24.04 ARM64 AMI ==============
 data "aws_ssm_parameter" "ubuntu_2404_arm64" {
   name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
 }
@@ -43,7 +43,7 @@ resource "aws_security_group" "subnet_router" {
   tags = { House = var.house_name }
 }
 
-# ============== Persistent EBS Volume (PROTECTED) ==============
+# ============== Persistent EBS Volume ==============
 resource "aws_ebs_volume" "actual_data" {
   availability_zone = "${var.aws_region}a"
   size              = 10
@@ -52,7 +52,7 @@ resource "aws_ebs_volume" "actual_data" {
 
   tags = { Name = "${var.house_name}-actualbudget-data", House = var.house_name }
 
-  lifecycle { prevent_destroy = true }   # ← NOW ACTIVE
+  lifecycle { prevent_destroy = true }
 }
 
 resource "aws_volume_attachment" "actual_data_attach" {
@@ -61,7 +61,45 @@ resource "aws_volume_attachment" "actual_data_attach" {
   instance_id = aws_instance.subnet_router.id
 }
 
-# ============== Single EC2 (Tailscale + Actual Budget) ==============
+# ============== IAM Role for SSM + S3 Backups ==============
+resource "aws_iam_role" "ssm_role" {
+  name = "${var.house_name}-ssm-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ssm" {
+  role       = aws_iam_role.ssm_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_role_policy" "s3_backup" {
+  name = "${var.house_name}-s3-backup"
+  role = aws_iam_role.ssm_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["s3:PutObject"]
+      Resource = "arn:aws:s3:::backups-083636778104/*"
+    }]
+  })
+}
+
+resource "aws_iam_instance_profile" "ssm_profile" {
+  name = "${var.house_name}-ssm-profile"
+  role = aws_iam_role.ssm_role.name
+}
+
+# ============== EC2 Instance ==============
 resource "aws_instance" "subnet_router" {
   ami           = data.aws_ssm_parameter.ubuntu_2404_arm64.value
   instance_type = "t4g.nano"
@@ -91,17 +129,26 @@ resource "aws_instance" "subnet_router" {
       --advertise-tags=tag:infra-router \
       --accept-routes --accept-dns=false
 
-    tailscale set --advertise-exit-node=false
-
-    # Docker + Actual Budget + Watchtower
+    # Docker + Actual Budget + Watchtower + Backup
     apt-get install -y ca-certificates curl gnupg awscli
-    # (Docker install remains the same)
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    apt-get update -y
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
     mkdir -p /opt/actualbudget/data
 
-    # Smart EBS Mount (unchanged — works great)
+    # Smart EBS mount
+    EBS_DEVICE=$(lsblk -o NAME,SERIAL | grep -E 'nvme1n1|vol' | awk '{print "/dev/"$1}' | head -n1)
+    if [ -n "$EBS_DEVICE" ] && ! mount | grep -q /opt/actualbudget/data; then
+      mkfs.ext4 -F $EBS_DEVICE || true
+      mkdir -p /opt/actualbudget/data
+      mount $EBS_DEVICE /opt/actualbudget/data
+      echo "$EBS_DEVICE /opt/actualbudget/data ext4 defaults,nofail 0 2" >> /etc/fstab
+    fi
 
-    # Actual Budget + Watchtower (now using variable)
+    # Docker Compose
     cat > /opt/actualbudget/docker-compose.yml <<'EOL'
     services:
       actual:
@@ -109,7 +156,6 @@ resource "aws_instance" "subnet_router" {
         ports: ["5006:5006"]
         volumes: ["./data:/data"]
         restart: unless-stopped
-
       watchtower:
         image: containrrr/watchtower:latest
         volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
@@ -123,7 +169,7 @@ resource "aws_instance" "subnet_router" {
 
     cd /opt/actualbudget && docker compose up -d
 
-    # Daily backup (now using variable)
+    # Daily backup script
     cat > /usr/local/bin/backup-actualbudget.sh <<'BACKUP'
     #!/bin/bash
     DATE=$(date +%Y-%m-%d)
@@ -144,5 +190,15 @@ resource "aws_instance" "subnet_router" {
   tags = { Name = "${var.house_name}-subnet-router", House = var.house_name }
 }
 
-# IAM resources (unchanged — already perfect)
-# (the rest of your IAM block stays exactly as it was)
+# ============== Outputs ==============
+output "subnet_router_public_ip" {
+  value = aws_instance.subnet_router.public_ip
+}
+
+output "subnet_router_private_ip" {
+  value = aws_instance.subnet_router.private_ip
+}
+
+output "backup_bucket" {
+  value = "backups-083636778104"
+}
