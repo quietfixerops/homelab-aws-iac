@@ -26,3 +26,9 @@ variable "telegram_chat_id" {
   type        = string
   sensitive   = true
 }
+
+variable "backup_bucket_name" {
+  description = "Name of the S3 backup bucket"
+  type        = string
+  default     = "backups-083636778104"
+}

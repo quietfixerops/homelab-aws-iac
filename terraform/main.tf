@@ -89,7 +89,7 @@ resource "aws_iam_role_policy" "s3_backup" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["s3:PutObject"]
-      Resource = "arn:aws:s3:::backups-083636778104/*"
+      Resource = "arn:aws:s3:::${var.backup_bucket_name}/*"
     }]
   })
 }
@@ -178,7 +178,7 @@ resource "aws_instance" "subnet_router" {
     docker compose down
     tar -czf $BACKUP_FILE data/
     docker compose up -d
-    aws s3 cp $BACKUP_FILE s3://backups-083636778104/actual-budget/actualbudget-$DATE.tar.gz --storage-class STANDARD_IA
+    aws s3 cp $BACKUP_FILE s3://${var.backup_bucket_name}/actual-budget/actualbudget-$DATE.tar.gz --storage-class STANDARD_IA
     rm $BACKUP_FILE
     curl -s -X POST "https://api.telegram.org/bot${var.telegram_bot_token}/sendMessage" -d "chat_id=${var.telegram_chat_id}" -d "text=✅ Actual Budget backup completed: actual-budget/actualbudget-$DATE.tar.gz"
     BACKUP
