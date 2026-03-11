@@ -12,10 +12,6 @@ jobs:
       id-token: write
       contents: read
 
-    defaults:
-      run:
-        working-directory: terraform
-
     steps:
       - uses: actions/checkout@v4
 
@@ -26,20 +22,26 @@ jobs:
           role-to-assume: arn:aws:iam::083636778104:role/GitHubActionsTerraformRole
           aws-region: us-east-1
 
-      - run: terraform init
-      - run: terraform validate
+      # All commands now use -chdir (no more working-directory default)
+      - name: Terraform Init
+        run: terraform -chdir=terraform init
+
+      - name: Terraform Validate
+        run: terraform -chdir=terraform validate
 
       - name: Terraform Plan
-        run: terraform plan \
-          -var "house_name=5marionct" \
-          -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" \
-          -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
-          -var "telegram_chat_id=${{ secrets.TELEGRAM_CHAT_ID }}"
+        run: |
+          terraform -chdir=terraform plan \
+            -var "house_name=5marionct" \
+            -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" \
+            -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
+            -var "telegram_chat_id=${{ secrets.TELEGRAM_CHAT_ID }}"
 
       - name: Terraform Apply
         if: github.ref == 'refs/heads/main'
-        run: terraform apply -auto-approve \
-          -var "house_name=5marionct" \
-          -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" \
-          -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
-          -var "telegram_chat_id=${{ secrets.TELEGRAM_CHAT_ID }}"
+        run: |
+          terraform -chdir=terraform apply -auto-approve \
+            -var "house_name=5marionct" \
+            -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" \
+            -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
+            -var "telegram_chat_id=${{ secrets.TELEGRAM_CHAT_ID }}"
