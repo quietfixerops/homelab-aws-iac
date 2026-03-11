@@ -28,8 +28,18 @@ jobs:
 
       - run: terraform init
       - run: terraform validate
-      - run: terraform plan -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}" -var "telegram_chat_id=${{ secrets.TELEGRAM_CHAT_ID }}"
+
+      - name: Terraform Plan
+        run: terraform plan \
+          -var "house_name=5marionct" \
+          -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" \
+          -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
+          -var "telegram_chat_id=${{ secrets.TELEGRAM_CHAT_ID }}"
 
       - name: Terraform Apply
         if: github.ref == 'refs/heads/main'
-        run: terraform apply -auto-approve -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}" -var "telegram_chat_id=${{ secrets.TELEGRAM_CHAT_ID }}"
+        run: terraform apply -auto-approve \
+          -var "house_name=5marionct" \
+          -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" \
+          -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
+          -var "telegram_chat_id=${{ secrets.TELEGRAM_CHAT_ID }}"
