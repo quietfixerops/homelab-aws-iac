@@ -68,7 +68,7 @@ cd /opt/actualbudget && docker compose up -d
 # === Daily backup script (re-fetches secrets so cron works) ===
 cat > /usr/local/bin/backup-actualbudget.sh <<'BACKUP'
 #!/bin/bash
-HOUSE_NAME="5marionct"  # ← change if you change house_name
+HOUSE_NAME="5marionct"  # ← update if you ever change house_name
 TELEGRAM_TOKEN=$(aws ssm get-parameter --name "/homelab/$HOUSE_NAME/telegram-bot-token" --with-decryption --query Parameter.Value --output text)
 TELEGRAM_CHAT_ID=$(aws ssm get-parameter --name "/homelab/$HOUSE_NAME/telegram-chat-id" --with-decryption --query Parameter.Value --output text)
 
