@@ -11,22 +11,6 @@ variable "vpc_cidr" {
   default = "10.10.0.0/16"
 }
 
-variable "tailscale_auth_key" {
-  type      = string
-  sensitive = true
-}
-
-variable "telegram_bot_token" {
-  type      = string
-  sensitive = true
-}
-
-variable "telegram_chat_id" {
-  description = "Your Telegram chat ID for notifications"
-  type        = string
-  sensitive   = true
-}
-
 variable "backup_bucket_name" {
   description = "Name of the S3 backup bucket"
   type        = string

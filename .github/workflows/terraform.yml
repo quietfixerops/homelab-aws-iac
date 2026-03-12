@@ -32,16 +32,10 @@ jobs:
       - name: Terraform Plan
         run: |
           terraform -chdir=terraform plan \
-            -var "house_name=5marionct" \
-            -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" \
-            -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
-            -var "telegram_chat_id=${{ secrets.TELEGRAM_CHAT_ID }}"
+            -var "house_name=5marionct"
 
       - name: Terraform Apply
         if: github.ref == 'refs/heads/main'
         run: |
           terraform -chdir=terraform apply -auto-approve \
-            -var "house_name=5marionct" \
-            -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" \
-            -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
-            -var "telegram_chat_id=${{ secrets.TELEGRAM_CHAT_ID }}"
+            -var "house_name=5marionct"

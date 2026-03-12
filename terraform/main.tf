@@ -3,6 +3,8 @@ data "aws_ssm_parameter" "ubuntu_2404_arm64" {
   name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
 }
 
+data "aws_caller_identity" "current" {}
+
 # ============== VPC ==============
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
@@ -94,6 +96,20 @@ resource "aws_iam_role_policy" "s3_backup" {
   })
 }
 
+resource "aws_iam_role_policy" "ssm_parameters" {
+  name = "${var.house_name}-ssm-parameters"
+  role = aws_iam_role.ssm_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["ssm:GetParameter"]
+      Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/homelab/${var.house_name}/*"
+    }]
+  })
+}
+
 resource "aws_iam_instance_profile" "ssm_profile" {
   name = "${var.house_name}-ssm-profile"
   role = aws_iam_role.ssm_role.name
@@ -111,101 +127,12 @@ resource "aws_instance" "subnet_router" {
 
   lifecycle { create_before_destroy = true }
 
-  user_data = <<-EOF
-    #!/bin/bash -ex
-    exec > >(tee -a /var/log/user-data.log) 2>&1
-
-    apt-get update -y && apt-get upgrade -y
-
-    # Tailscale
-    curl -fsSL https://tailscale.com/install.sh | sh
-    echo 'net.ipv4.ip_forward = 1' | tee -a /etc/sysctl.conf
-    echo 'net.ipv6.conf.all.forwarding = 1' | tee -a /etc/sysctl.conf
-    sysctl -p
-
-    tailscale up --authkey="${var.tailscale_auth_key}" \
-      --hostname=${var.house_name}-subnet-router \
-      --advertise-routes=${var.vpc_cidr} \
-      --advertise-tags=tag:infra-router \
-      --accept-routes --accept-dns=false
-
-    # Official Docker install (Ubuntu 24.04)
-    apt-get install -y ca-certificates curl gnupg
-    install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-    apt-get update -y
-    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-
-    # Official AWS CLI v2 (fixes the broken apt awscli issue)
-    curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
-    apt-get install -y unzip
-    unzip awscliv2.zip
-    ./aws/install
-    rm -rf aws awscliv2.zip
-
-    # Actual Budget setup
-    mkdir -p /opt/actualbudget/data
-
-    # Smart EBS mount
-    EBS_DEVICE=$(lsblk -o NAME,SERIAL | grep -E 'nvme1n1|vol' | awk '{print "/dev/"$1}' | head -n1)
-    if [ -n "$EBS_DEVICE" ] && ! mount | grep -q /opt/actualbudget/data; then
-      mkfs.ext4 -F $EBS_DEVICE || true
-      mount $EBS_DEVICE /opt/actualbudget/data
-      echo "$EBS_DEVICE /opt/actualbudget/data ext4 defaults,nofail 0 2" >> /etc/fstab
-    fi
-
-    # Docker Compose + Watchtower
-    cat > /opt/actualbudget/docker-compose.yml <<'EOL'
-    services:
-      actual:
-        image: actualbudget/actual-server:latest
-        ports: ["5006:5006"]
-        volumes: ["./data:/data"]
-        restart: unless-stopped
-      watchtower:
-        image: containrrr/watchtower:latest
-        volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
-        environment:
-          - WATCHTOWER_POLL_INTERVAL=3600
-          - WATCHTOWER_CLEANUP=true
-          - WATCHTOWER_NOTIFICATION_TYPE=shoutrrr
-          - WATCHTOWER_NOTIFICATION_URL=telegram://${var.telegram_bot_token}@telegram?channels=${var.telegram_chat_id}
-        restart: unless-stopped
-    EOL
-
-    cd /opt/actualbudget && docker compose up -d
-
-    # Daily backup script
-    cat > /usr/local/bin/backup-actualbudget.sh <<'BACKUP'
-    #!/bin/bash
-    DATE=$(date +%Y-%m-%d)
-    BACKUP_FILE="/tmp/actualbudget-$DATE.tar.gz"
-    cd /opt/actualbudget
-    docker compose down
-    tar -czf $BACKUP_FILE data/
-    docker compose up -d
-    aws s3 cp $BACKUP_FILE s3://${var.backup_bucket_name}/actual-budget/actualbudget-$DATE.tar.gz --storage-class STANDARD_IA
-    rm $BACKUP_FILE
-    curl -s -X POST "https://api.telegram.org/bot${var.telegram_bot_token}/sendMessage" -d "chat_id=${var.telegram_chat_id}" -d "text=✅ Actual Budget backup completed: actual-budget/actualbudget-$DATE.tar.gz"
-    BACKUP
-
-    chmod +x /usr/local/bin/backup-actualbudget.sh
-    echo "0 3 * * * /usr/local/bin/backup-actualbudget.sh" | crontab -
-  EOF
-
+  user_data = templatefile("${path.module}/scripts/user-data.sh.tpl", {
+    house_name         = var.house_name
+    vpc_cidr           = var.vpc_cidr
+    backup_bucket_name = var.backup_bucket_name
+  })
+  
   tags = { Name = "${var.house_name}-subnet-router", House = var.house_name }
 }
 
-# ============== Outputs ==============
-output "subnet_router_public_ip" {
-  value = aws_instance.subnet_router.public_ip
-}
-
-output "subnet_router_private_ip" {
-  value = aws_instance.subnet_router.private_ip
-}
-
-output "backup_bucket" {
-  value = "backups-083636778104"
-}
