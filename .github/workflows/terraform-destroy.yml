@@ -39,4 +39,4 @@ jobs:
           exit 1
 
       - name: Terraform Destroy
-        run: terraform destroy -auto-approve -var "house_name=5marionct" -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}"
+        run: terraform destroy -auto-approve -var "house_name=5marionct" -var "tailscale_auth_key=${{ secrets.TAILSCALE_AUTH_KEY }}" -var "telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}" -var "telegram_chat_id=${{ secrets.TELEGRAM_CHAT_ID }}"
