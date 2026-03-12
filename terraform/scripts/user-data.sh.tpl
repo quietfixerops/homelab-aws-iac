@@ -22,7 +22,7 @@ tailscale up --authkey="$TAILSCALE_KEY" \
   --accept-routes --accept-dns=false
 
 # === Docker + Official AWS CLI v2 ===
-apt-get install -y ca-certificates curl gnupg
+apt-get install -y ca-certificates curl gnupg unzip
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
@@ -30,7 +30,6 @@ apt-get update -y
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
 curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
-apt-get install -y unzip
 unzip awscliv2.zip
 ./aws/install
 rm -rf aws awscliv2.zip
@@ -45,8 +44,8 @@ if [ -n "$EBS_DEVICE" ] && ! mount | grep -q /opt/actualbudget/data; then
   echo "$EBS_DEVICE /opt/actualbudget/data ext4 defaults,nofail 0 2" >> /etc/fstab
 fi
 
-# === Docker Compose + Watchtower ===
-cat > /opt/actualbudget/docker-compose.yml <<'EOL'
+# === Docker Compose + Watchtower (secrets expanded at boot time) ===
+cat > /opt/actualbudget/docker-compose.yml <<EOL
 services:
   actual:
     image: actualbudget/actual-server:latest
@@ -60,15 +59,19 @@ services:
       - WATCHTOWER_POLL_INTERVAL=3600
       - WATCHTOWER_CLEANUP=true
       - WATCHTOWER_NOTIFICATION_TYPE=shoutrrr
-      - WATCHTOWER_NOTIFICATION_URL=telegram://${TELEGRAM_TOKEN}@telegram?channels=${TELEGRAM_CHAT_ID}
+      - WATCHTOWER_NOTIFICATION_URL=telegram://$TELEGRAM_TOKEN@telegram?channels=$TELEGRAM_CHAT_ID
     restart: unless-stopped
 EOL
 
 cd /opt/actualbudget && docker compose up -d
 
-# === Daily backup script ===
+# === Daily backup script (re-fetches secrets so cron works) ===
 cat > /usr/local/bin/backup-actualbudget.sh <<'BACKUP'
 #!/bin/bash
+HOUSE_NAME="5marionct"  # ← change if you ever change house_name
+TELEGRAM_TOKEN=$(aws ssm get-parameter --name "/homelab/$HOUSE_NAME/telegram-bot-token" --with-decryption --query Parameter.Value --output text)
+TELEGRAM_CHAT_ID=$(aws ssm get-parameter --name "/homelab/$HOUSE_NAME/telegram-chat-id" --with-decryption --query Parameter.Value --output text)
+
 DATE=$(date +%Y-%m-%d)
 BACKUP_FILE="/tmp/actualbudget-$DATE.tar.gz"
 cd /opt/actualbudget
@@ -77,7 +80,7 @@ tar -czf $BACKUP_FILE data/
 docker compose up -d
 aws s3 cp $BACKUP_FILE s3://${backup_bucket_name}/actual-budget/actualbudget-$DATE.tar.gz --storage-class STANDARD_IA
 rm -f $BACKUP_FILE
-curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" -d "text=✅ Actual Budget backup completed: actual-budget/actualbudget-$DATE.tar.gz"
+curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage" -d "chat_id=$TELEGRAM_CHAT_ID" -d "text=✅ Actual Budget backup completed: actual-budget/actualbudget-$DATE.tar.gz"
 BACKUP
 
 chmod +x /usr/local/bin/backup-actualbudget.sh
