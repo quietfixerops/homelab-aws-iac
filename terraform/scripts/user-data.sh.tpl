@@ -1,11 +1,10 @@
 #!/bin/bash -ex
 exec > >(tee -a /var/log/user-data.log) 2>&1
 
-echo "=== Starting bootstrap script ==="
+echo "=== Starting bootstrap script at $(date) ==="
 
-apt-get update -y && apt-get upgrade -y
-
-# === Install prerequisites + AWS CLI v2 FIRST (critical fix) ===
+# === 1. Install AWS CLI v2 FIRST (this fixes the "command not found") ===
+apt-get update -y
 apt-get install -y ca-certificates curl gnupg unzip
 
 curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
@@ -13,17 +12,17 @@ unzip awscliv2.zip
 ./aws/install
 rm -rf aws awscliv2.zip
 
-echo "AWS CLI installed. Version: $(aws --version)"
+echo "AWS CLI installed successfully: $(aws --version)"
 
-# === Fetch secrets from SSM Parameter Store ===
+# === 2. Fetch secrets from SSM Parameter Store ===
 HOUSE_NAME="${house_name}"
 TAILSCALE_KEY=$(aws ssm get-parameter --name "/homelab/$HOUSE_NAME/tailscale-auth-key" --with-decryption --query Parameter.Value --output text)
 TELEGRAM_TOKEN=$(aws ssm get-parameter --name "/homelab/$HOUSE_NAME/telegram-bot-token" --with-decryption --query Parameter.Value --output text)
 TELEGRAM_CHAT_ID=$(aws ssm get-parameter --name "/homelab/$HOUSE_NAME/telegram-chat-id" --with-decryption --query Parameter.Value --output text)
 
-echo "Secrets fetched successfully"
+echo "All secrets fetched from SSM successfully"
 
-# === Tailscale ===
+# === 3. Tailscale ===
 curl -fsSL https://tailscale.com/install.sh | sh
 echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.conf
 echo 'net.ipv6.conf.all.forwarding = 1' >> /etc/sysctl.conf
@@ -37,16 +36,16 @@ tailscale up --authkey="$TAILSCALE_KEY" \
 
 echo "Tailscale started"
 
-# === Docker ===
+# === 4. Docker ===
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 apt-get update -y
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-echo "Docker installed. Version: $(docker --version)"
+echo "Docker installed: $(docker --version)"
 
-# === ActualBudget setup + EBS mount ===
+# === 5. ActualBudget + EBS mount ===
 mkdir -p /opt/actualbudget/data
 
 EBS_DEVICE=$(lsblk -o NAME,SERIAL -n | grep -E 'nvme1n1|vol' | awk '{print "/dev/"$1}' | head -n1)
@@ -57,7 +56,7 @@ if [ -n "$EBS_DEVICE" ] && ! mountpoint -q /opt/actualbudget/data; then
   echo "EBS volume mounted successfully"
 fi
 
-# === Docker Compose + Watchtower ===
+# === 6. Docker Compose + Watchtower ===
 cat > /opt/actualbudget/docker-compose.yml <<EOL
 services:
   actual:
@@ -77,9 +76,9 @@ services:
 EOL
 
 cd /opt/actualbudget && docker compose up -d
-echo "ActualBudget + Watchtower started"
+echo "ActualBudget + Watchtower started successfully"
 
-# === Daily backup script ===
+# === 7. Daily backup script ===
 cat > /usr/local/bin/backup-actualbudget.sh <<'BACKUP'
 #!/bin/bash
 HOUSE_NAME="5marionct"
@@ -100,4 +99,4 @@ BACKUP
 chmod +x /usr/local/bin/backup-actualbudget.sh
 echo "0 3 * * * /usr/local/bin/backup-actualbudget.sh" | crontab -
 
-echo "=== Bootstrap completed successfully ==="
+echo "=== Bootstrap completed successfully at $(date) ==="
