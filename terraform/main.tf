@@ -137,7 +137,7 @@ resource "aws_instance" "subnet_router" {
     apt-get update -y
     apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-    # Official AWS CLI v2 (fixes the old apt package issue)
+    # Official AWS CLI v2 (fixes the broken apt awscli issue)
     curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
     apt-get install -y unzip
     unzip awscliv2.zip
@@ -147,7 +147,7 @@ resource "aws_instance" "subnet_router" {
     # Actual Budget setup
     mkdir -p /opt/actualbudget/data
 
-    # Smart EBS mount (kept from your working version)
+    # Smart EBS mount
     EBS_DEVICE=$(lsblk -o NAME,SERIAL | grep -E 'nvme1n1|vol' | awk '{print "/dev/"$1}' | head -n1)
     if [ -n "$EBS_DEVICE" ] && ! mount | grep -q /opt/actualbudget/data; then
       mkfs.ext4 -F $EBS_DEVICE || true
@@ -176,7 +176,7 @@ resource "aws_instance" "subnet_router" {
 
     cd /opt/actualbudget && docker compose up -d
 
-    # Daily backup script (using variable)
+    # Daily backup script
     cat > /usr/local/bin/backup-actualbudget.sh <<'BACKUP'
     #!/bin/bash
     DATE=$(date +%Y-%m-%d)
@@ -193,7 +193,7 @@ resource "aws_instance" "subnet_router" {
     chmod +x /usr/local/bin/backup-actualbudget.sh
     echo "0 3 * * * /usr/local/bin/backup-actualbudget.sh" | crontab -
   EOF
-  
+
   tags = { Name = "${var.house_name}-subnet-router", House = var.house_name }
 }
 
