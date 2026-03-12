@@ -129,26 +129,33 @@ resource "aws_instance" "subnet_router" {
       --advertise-tags=tag:infra-router \
       --accept-routes --accept-dns=false
 
-    # Docker + Actual Budget + Watchtower + Backup
-    apt-get install -y ca-certificates curl gnupg awscli
+    # Official Docker install (Ubuntu 24.04)
+    apt-get install -y ca-certificates curl gnupg
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
     apt-get update -y
     apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
+    # Official AWS CLI v2 (fixes the old apt package issue)
+    curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
+    apt-get install -y unzip
+    unzip awscliv2.zip
+    ./aws/install
+    rm -rf aws awscliv2.zip
+
+    # Actual Budget setup
     mkdir -p /opt/actualbudget/data
 
-    # Smart EBS mount
+    # Smart EBS mount (kept from your working version)
     EBS_DEVICE=$(lsblk -o NAME,SERIAL | grep -E 'nvme1n1|vol' | awk '{print "/dev/"$1}' | head -n1)
     if [ -n "$EBS_DEVICE" ] && ! mount | grep -q /opt/actualbudget/data; then
       mkfs.ext4 -F $EBS_DEVICE || true
-      mkdir -p /opt/actualbudget/data
       mount $EBS_DEVICE /opt/actualbudget/data
       echo "$EBS_DEVICE /opt/actualbudget/data ext4 defaults,nofail 0 2" >> /etc/fstab
     fi
 
-    # Docker Compose
+    # Docker Compose + Watchtower
     cat > /opt/actualbudget/docker-compose.yml <<'EOL'
     services:
       actual:
@@ -169,7 +176,7 @@ resource "aws_instance" "subnet_router" {
 
     cd /opt/actualbudget && docker compose up -d
 
-    # Daily backup script
+    # Daily backup script (using variable)
     cat > /usr/local/bin/backup-actualbudget.sh <<'BACKUP'
     #!/bin/bash
     DATE=$(date +%Y-%m-%d)
@@ -186,7 +193,7 @@ resource "aws_instance" "subnet_router" {
     chmod +x /usr/local/bin/backup-actualbudget.sh
     echo "0 3 * * * /usr/local/bin/backup-actualbudget.sh" | crontab -
   EOF
-
+  
   tags = { Name = "${var.house_name}-subnet-router", House = var.house_name }
 }
 
