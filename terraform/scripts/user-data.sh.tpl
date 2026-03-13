@@ -203,12 +203,9 @@ install_docker() {
 }
 
 write_compose_file() {
-  mkdir -p "$ACTUAL_DIR" "$DATA_DIR"
-
-write_compose_file() {
   mkdir -p "$ACTUAL_DIR" "$DATA_DIR" "$ACTUAL_DIR/diun"
 
-  cat > "$ACTUAL_DIR/docker-compose.yml" <<EOF
+  cat > "$ACTUAL_DIR/docker-compose.yml" <<'COMPOSE_FILE'
 services:
   actual:
     image: actualbudget/actual-server:latest
@@ -225,7 +222,7 @@ services:
     image: crazymax/diun:v4.31.0
     container_name: diun
     command: serve
-    hostname: "${house_name}-diun"
+    hostname: "__HOUSE_NAME__-diun"
     volumes:
       - "./diun:/data"
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
@@ -239,27 +236,36 @@ services:
       DIUN_WATCH_RUNONSTARTUP: "true"
       DIUN_PROVIDERS_DOCKER: "true"
       DIUN_PROVIDERS_DOCKER_WATCHBYDEFAULT: "false"
-      DIUN_NOTIF_TELEGRAM_TOKEN: "$TELEGRAM_TOKEN"
-      DIUN_NOTIF_TELEGRAM_CHATIDS: "$TELEGRAM_CHAT_ID"
+      DIUN_NOTIF_TELEGRAM_TOKEN: "__TELEGRAM_TOKEN__"
+      DIUN_NOTIF_TELEGRAM_CHATIDS: "__TELEGRAM_CHAT_ID__"
     restart: unless-stopped
-EOF
+COMPOSE_FILE
+
+  sed -i \
+    -e "s|__HOUSE_NAME__|$HOUSE_NAME|g" \
+    -e "s|__TELEGRAM_TOKEN__|$TELEGRAM_TOKEN|g" \
+    -e "s|__TELEGRAM_CHAT_ID__|$TELEGRAM_CHAT_ID|g" \
+    "$ACTUAL_DIR/docker-compose.yml"
 
   chown -R ubuntu:ubuntu "$ACTUAL_DIR"
+
+  if [ ! -f "$ACTUAL_DIR/docker-compose.yml" ]; then
+    log "ERROR: failed to create $ACTUAL_DIR/docker-compose.yml"
+    return 1
+  fi
+
+  log "Created $ACTUAL_DIR/docker-compose.yml"
   ls -l "$ACTUAL_DIR/docker-compose.yml"
 }
 
-  chown -R ubuntu:ubuntu "$ACTUAL_DIR"
-}
-
 start_containers() {
-  cd "$ACTUAL_DIR"
-
   if [ ! -f "$ACTUAL_DIR/docker-compose.yml" ]; then
     log "ERROR: $ACTUAL_DIR/docker-compose.yml not found"
     ls -la "$ACTUAL_DIR" || true
     return 1
   fi
 
+  cd "$ACTUAL_DIR"
   docker compose -f "$ACTUAL_DIR/docker-compose.yml" up -d
   docker ps
   log "ActualBudget + DIUN started successfully"
