@@ -9,9 +9,11 @@ Everything runs on a single `t4g.nano` ARM instance (~$3–5/month total).
 - ActualBudget in Docker with persistent encrypted EBS volume
 - Watchtower auto-updates + Telegram notifications
 - Daily automated backups to S3 (STANDARD_IA) + Telegram alert
-- Least-privilege IAM + SSM Parameter Store for secrets (no secrets in Terraform state or EC2 logs)
+- Least-privilege IAM + SSM Parameter Store for secrets
 - Remote S3 backend with state locking
 - GitHub Actions OIDC CI/CD
+- Secrets are not stored in Terraform state
+- Bootstrap avoids shell xtrace and avoids passing the Tailscale auth key directly on the command line
 
 ## Architecture
 ```mermaid

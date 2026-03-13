@@ -36,7 +36,7 @@ printf '%s' "$TAILSCALE_KEY" > "$AUTHKEY_FILE"
 chmod 0600 "$AUTHKEY_FILE"
 
 tailscale up \
-  --auth-key "file:${AUTHKEY_FILE}" \
+  --auth-key "file:$${AUTHKEY_FILE}" \
   --hostname="${house_name}-subnet-router" \
   --advertise-routes="${vpc_cidr}" \
   --advertise-tags=tag:infra-router \
@@ -73,7 +73,7 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 
-if [ -z "${EBS_DEVICE:-}" ]; then
+if [ -z "$${EBS_DEVICE:-}" ]; then
   echo "ERROR: expected EBS device not found" >&2
   exit 1
 fi
