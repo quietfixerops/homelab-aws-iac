@@ -165,12 +165,13 @@ install_tailscale() {
     --advertise-routes "$VPC_CIDR" \
     --advertise-tags=tag:infra-router \
     --accept-routes \
-    --accept-dns=false || log "tailscale up returned non-zero; check admin approval state if needed"
+    --accept-dns=false \
+    --ssh || log "tailscale up returned non-zero; check admin approval state if needed"
 
   shred -u "$authkey_file" 2>/dev/null || rm -f "$authkey_file"
   unset TAILSCALE_KEY
 
-  log "Tailscale started"
+  log "Tailscale started with Tailscale SSH enabled"
 }
 
 install_docker() {
@@ -207,7 +208,7 @@ write_compose_file() {
 write_compose_file() {
   mkdir -p "$ACTUAL_DIR" "$DATA_DIR" "$ACTUAL_DIR/diun"
 
-  cat > "$${ACTUAL_DIR}/docker-compose.yml" <<EOF
+  cat > "$ACTUAL_DIR/docker-compose.yml" <<EOF
 services:
   actual:
     image: actualbudget/actual-server:latest
@@ -221,10 +222,10 @@ services:
       - "diun.enable=true"
 
   diun:
-    image: crazymax/diun:latest
+    image: crazymax/diun:v4.31.0
     container_name: diun
     command: serve
-    hostname: "$${HOUSE_NAME}-diun"
+    hostname: "${house_name}-diun"
     volumes:
       - "./diun:/data"
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
@@ -238,12 +239,13 @@ services:
       DIUN_WATCH_RUNONSTARTUP: "true"
       DIUN_PROVIDERS_DOCKER: "true"
       DIUN_PROVIDERS_DOCKER_WATCHBYDEFAULT: "false"
-      DIUN_NOTIF_TELEGRAM_TOKEN: "$${TELEGRAM_TOKEN}"
-      DIUN_NOTIF_TELEGRAM_CHATIDS: "$${TELEGRAM_CHAT_ID}"
+      DIUN_NOTIF_TELEGRAM_TOKEN: "$TELEGRAM_TOKEN"
+      DIUN_NOTIF_TELEGRAM_CHATIDS: "$TELEGRAM_CHAT_ID"
     restart: unless-stopped
 EOF
 
   chown -R ubuntu:ubuntu "$ACTUAL_DIR"
+  ls -l "$ACTUAL_DIR/docker-compose.yml"
 }
 
   chown -R ubuntu:ubuntu "$ACTUAL_DIR"
@@ -251,7 +253,14 @@ EOF
 
 start_containers() {
   cd "$ACTUAL_DIR"
-  docker compose up -d
+
+  if [ ! -f "$ACTUAL_DIR/docker-compose.yml" ]; then
+    log "ERROR: $ACTUAL_DIR/docker-compose.yml not found"
+    ls -la "$ACTUAL_DIR" || true
+    return 1
+  fi
+
+  docker compose -f "$ACTUAL_DIR/docker-compose.yml" up -d
   docker ps
   log "ActualBudget + DIUN started successfully"
 }
