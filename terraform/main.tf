@@ -52,15 +52,22 @@ resource "aws_ebs_volume" "actual_data" {
   type              = "gp3"
   encrypted         = true
 
-  tags = { Name = "${var.house_name}-actualbudget-data", House = var.house_name }
+  tags = {
+    Name  = "${var.house_name}-actualbudget-data"
+    House = var.house_name
+  }
 
-  lifecycle { prevent_destroy = true }
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_volume_attachment" "actual_data_attach" {
   device_name = "/dev/sdf"
   volume_id   = aws_ebs_volume.actual_data.id
   instance_id = aws_instance.subnet_router.id
+
+  stop_instance_before_detaching = true
 }
 
 # ============== IAM Role for SSM + S3 Backups ==============
@@ -117,15 +124,24 @@ resource "aws_iam_instance_profile" "ssm_profile" {
 
 # ============== EC2 Instance ==============
 resource "aws_instance" "subnet_router" {
-  ami           = data.aws_ssm_parameter.ubuntu_2404_arm64.value
-  instance_type = "t4g.nano"
-  subnet_id     = module.vpc.public_subnets[0]
+  ami                         = data.aws_ssm_parameter.ubuntu_2404_arm64.value
+  instance_type               = "t4g.nano"
+  subnet_id                   = module.vpc.public_subnets[0]
   vpc_security_group_ids      = [aws_security_group.subnet_router.id]
   associate_public_ip_address = true
+  iam_instance_profile        = aws_iam_instance_profile.ssm_profile.name
 
-  iam_instance_profile = aws_iam_instance_profile.ssm_profile.name
+  metadata_options {
+    http_endpoint = "enabled"
+    http_tokens   = "required"
+  }
 
-  lifecycle { create_before_destroy = true }
+  root_block_device {
+    encrypted             = true
+    delete_on_termination = true
+    volume_type           = "gp3"
+    volume_size           = 8
+  }
 
   user_data = templatefile("${path.module}/scripts/user-data.sh.tpl", {
     house_name         = var.house_name
@@ -134,7 +150,9 @@ resource "aws_instance" "subnet_router" {
   })
 
   user_data_replace_on_change = true
-  
-  tags = { Name = "${var.house_name}-subnet-router", House = var.house_name }
-}
 
+  tags = {
+    Name  = "${var.house_name}-subnet-router"
+    House = var.house_name
+  }
+}

@@ -1,41 +1,69 @@
 name: Terraform CI/CD
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
+    paths:
+      - ".github/workflows/terraform.yml"
+      - "terraform/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/terraform.yml"
+      - "terraform/**"
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TF_IN_AUTOMATION: "true"
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  TF_ROLE_ARN: ${{ vars.TF_ROLE_ARN }}
 
 jobs:
   terraform:
     runs-on: ubuntu-latest
+
     permissions:
       id-token: write
       contents: read
 
+    defaults:
+      run:
+        working-directory: terraform
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: hashicorp/setup-terraform@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::083636778104:role/GitHubActionsTerraformRole
-          aws-region: us-east-1
+          role-to-assume: ${{ env.TF_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      # All commands now use -chdir (no more working-directory default)
       - name: Terraform Init
-        run: terraform -chdir=terraform init
+        run: terraform init
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
 
       - name: Terraform Validate
-        run: terraform -chdir=terraform validate
+        run: terraform validate
 
       - name: Terraform Plan
-        run: |
-          terraform -chdir=terraform plan \
-            -var "house_name=5marionct"
+        run: terraform plan -out=tfplan
+
+      - name: Upload plan artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: terraform/tfplan
 
       - name: Terraform Apply
-        if: github.ref == 'refs/heads/main'
-        run: |
-          terraform -chdir=terraform apply -auto-approve \
-            -var "house_name=5marionct"
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: terraform apply -auto-approve tfplan
