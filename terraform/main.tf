@@ -132,6 +132,8 @@ resource "aws_instance" "subnet_router" {
     vpc_cidr           = var.vpc_cidr
     backup_bucket_name = var.backup_bucket_name
   })
+
+  user_data_replace_on_change = true
   
   tags = { Name = "${var.house_name}-subnet-router", House = var.house_name }
 }
