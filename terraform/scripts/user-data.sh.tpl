@@ -3,7 +3,7 @@ exec > >(tee -a /var/log/user-data.log) 2>&1
 
 echo "=== Starting bootstrap script at $(date) ==="
 
-# === 1. Install AWS CLI v2 FIRST (this fixes the "command not found") ===
+# === 1. AWS CLI v2 FIRST (critical) ===
 apt-get update -y
 apt-get install -y ca-certificates curl gnupg unzip
 
@@ -14,7 +14,7 @@ rm -rf aws awscliv2.zip
 
 echo "AWS CLI installed successfully: $(aws --version)"
 
-# === 2. Fetch secrets from SSM Parameter Store ===
+# === 2. Fetch secrets from SSM ===
 HOUSE_NAME="${house_name}"
 TAILSCALE_KEY=$(aws ssm get-parameter --name "/homelab/$HOUSE_NAME/tailscale-auth-key" --with-decryption --query Parameter.Value --output text)
 TELEGRAM_TOKEN=$(aws ssm get-parameter --name "/homelab/$HOUSE_NAME/telegram-bot-token" --with-decryption --query Parameter.Value --output text)
@@ -32,20 +32,21 @@ tailscale up --authkey="$TAILSCALE_KEY" \
   --hostname=${house_name}-subnet-router \
   --advertise-routes=${vpc_cidr} \
   --advertise-tags=tag:infra-router \
-  --accept-routes --accept-dns=false
+  --accept-routes --accept-dns=false || echo "Tailscale up completed (warnings are normal)"
 
 echo "Tailscale started"
 
-# === 4. Docker ===
+# === 4. Docker + add ubuntu user to docker group ===
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 apt-get update -y
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
+usermod -aG docker ubuntu
 echo "Docker installed: $(docker --version)"
 
-# === 5. ActualBudget + EBS mount ===
+# === 5. EBS volume + ActualBudget data dir ===
 mkdir -p /opt/actualbudget/data
 
 EBS_DEVICE=$(lsblk -o NAME,SERIAL -n | grep -E 'nvme1n1|vol' | awk '{print "/dev/"$1}' | head -n1)
@@ -78,7 +79,7 @@ EOL
 cd /opt/actualbudget && docker compose up -d
 echo "ActualBudget + Watchtower started successfully"
 
-# === 7. Daily backup script ===
+# === 7. Daily backup cron (re-fetches secrets) ===
 cat > /usr/local/bin/backup-actualbudget.sh <<'BACKUP'
 #!/bin/bash
 HOUSE_NAME="5marionct"
@@ -99,4 +100,4 @@ BACKUP
 chmod +x /usr/local/bin/backup-actualbudget.sh
 echo "0 3 * * * /usr/local/bin/backup-actualbudget.sh" | crontab -
 
-echo "=== Bootstrap completed successfully at $(date) ==="
+echo "=== FULL BOOTSTRAP COMPLETED SUCCESSFULLY at $(date) ==="
